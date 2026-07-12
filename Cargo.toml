@@ -1,0 +1,20 @@
+[package]
+name = "rayslash-module-units"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/rslauncher/rayslash-module-units"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "rayslash:units"
+
+[package.metadata.component.target]
+path = "wit"
+world = "module"
+

@@ -63,16 +63,21 @@ struct Unit {
 
 fn convert(input: &str) -> Option<Result<(String, String), String>> {
     let words = input.split_whitespace().collect::<Vec<_>>();
-    if words.len() != 4 || !matches!(words[2].to_ascii_lowercase().as_str(), "to" | "in") {
-        return None;
-    }
-    let amount = match words[0].replace(',', "").parse::<f64>() {
-        Ok(value) if value.is_finite() => value,
+    let (amount_text, from_text, connector, to_text) = match words.as_slice() {
+        [amount, from, connector, to] => (*amount, *from, *connector, *to),
+        [amount_and_unit, connector, to] => {
+            let (amount, from) = split_compact_amount_and_unit(amount_and_unit)?;
+            (amount, from, *connector, *to)
+        }
         _ => return None,
     };
-    let from = unit(words[1])?;
-    let Some(to) = unit(words[3]) else {
-        return Some(Err(format!("Unsupported unit: {}", words[3])));
+    if !matches!(connector.to_ascii_lowercase().as_str(), "to" | "in") {
+        return None;
+    }
+    let amount = parse_amount(amount_text)?;
+    let from = unit(from_text)?;
+    let Some(to) = unit(to_text) else {
+        return Some(Err(format!("Unsupported unit: {to_text}")));
     };
     if from.dimension != to.dimension {
         return Some(Err("Units belong to different dimensions.".into()));
@@ -98,6 +103,26 @@ fn convert(input: &str) -> Option<Result<(String, String), String>> {
         expression,
         format!("{} {}", format_number(converted), to.symbol),
     )))
+}
+
+fn split_compact_amount_and_unit(value: &str) -> Option<(&str, &str)> {
+    value
+        .char_indices()
+        .rev()
+        .filter(|(index, _)| *index > 0)
+        .find_map(|(index, _)| {
+            parse_amount(&value[..index])
+                .is_some()
+                .then_some((&value[..index], &value[index..]))
+        })
+}
+
+fn parse_amount(value: &str) -> Option<f64> {
+    value
+        .replace(',', "")
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
 }
 
 fn unit(value: &str) -> Option<Unit> {
@@ -141,7 +166,13 @@ fn format_number(value: f64) -> String {
     if (value - value.round()).abs() < 1e-10 {
         return format!("{:.0}", value);
     }
-    let text = format!("{value:.8}");
+    let magnitude = value.abs();
+    let decimal_places = if magnitude == 0.0 {
+        0
+    } else {
+        (4 - magnitude.log10().floor() as i32).clamp(0, 8) as usize
+    };
+    let text = format!("{value:.decimal_places$}");
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
@@ -152,14 +183,35 @@ mod tests {
     use super::*;
     #[test]
     fn converts_length() {
-        assert_eq!(convert("10 km to mi").unwrap().unwrap().1, "6.21371192 mi");
+        assert_eq!(convert("10 km to mi").unwrap().unwrap().1, "6.2137 mi");
     }
     #[test]
     fn converts_temperature() {
         assert_eq!(convert("32 f to c").unwrap().unwrap().1, "0 °C");
     }
     #[test]
+    fn converts_compact_temperature_symbols() {
+        assert_eq!(convert("10f to c").unwrap().unwrap().1, "-12.222 °C");
+        assert_eq!(convert("-40°F to °C").unwrap().unwrap().1, "-40 °C");
+    }
+    #[test]
+    fn converts_full_temperature_names() {
+        assert_eq!(
+            convert("32 fahrenheit to celsius").unwrap().unwrap().1,
+            "0 °C"
+        );
+        assert_eq!(
+            convert("273.15kelvin in celsius").unwrap().unwrap().1,
+            "0 °C"
+        );
+    }
+    #[test]
     fn rejects_mixed_dimensions() {
         assert!(convert("1 kg to m").unwrap().is_err());
+    }
+    #[test]
+    fn keeps_small_values_useful_without_long_common_results() {
+        assert_eq!(convert("10kg to lb").unwrap().unwrap().1, "22.046 lb");
+        assert_eq!(convert("1 mg to kg").unwrap().unwrap().1, "0.000001 kg");
     }
 }
